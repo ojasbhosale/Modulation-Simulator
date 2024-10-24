@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import '../../../styles/ASK.css';
 
@@ -18,17 +18,7 @@ const ASK = () => {
   const carrierChartRef = useRef(null);
   const askChartRef = useRef(null);
 
-  useEffect(() => {
-    updateCharts();
-
-    // Cleanup charts on component unmount or update
-    return () => {
-      if (carrierChartRef.current) carrierChartRef.current.destroy();
-      if (askChartRef.current) askChartRef.current.destroy();
-    };
-  }, [bitStream, carrierAmplitude, carrierFrequency, carrierType]);
-
-  const validateInputs = () => {
+  const validateInputs = useCallback(() => {
     if (
       carrierAmplitude <= 0 || // Carrier amplitude should be greater than 0
       carrierFrequency <= 0 ||
@@ -38,21 +28,57 @@ const ASK = () => {
       return false;
     }
     return true;
-  };
+  }, [carrierAmplitude, carrierFrequency, bitStream]);
 
-  const updateCharts = () => {
-    if (!validateInputs()) return;
+  const generateCarrierSignal = useCallback((frequency, amplitude, sampleRate, duration) => {
+    const numSamples = duration * sampleRate;
+    const carrierSignal = [];
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const sample = carrierType === 'cos'
+        ? amplitude * Math.cos(2 * Math.PI * frequency * time)
+        : amplitude * Math.sin(2 * Math.PI * frequency * time);
+      carrierSignal.push(sample);
+    }
+    return carrierSignal;
+  }, [carrierType]);
 
-    // Generate signals
-    const carrierSig = generateCarrierSignal(carrierFrequency, carrierAmplitude, sampleRate, duration);
-    const askSig = generateASKSignal(carrierSig, bitStream, bitDuration, sampleRate);
+  const generateASKSignal = useCallback((carrierSignal, bitStream, bitDuration, sampleRate) => {
+    const askSignal = [];
+    const numSamplesPerBit = Math.floor(bitDuration * sampleRate);
+    let bitIndex = 0;
 
-    // Update the charts
-    renderCharts(carrierSig, askSig);
-    updateExplanations();
-  };
+    for (let i = 0; i < carrierSignal.length; i++) {
+      const bit = bitStream[bitIndex];
+      const modulatedSample = bit === '1' ? carrierSignal[i] : 0;
+      askSignal.push(modulatedSample);
 
-  const renderCharts = (carrierSig, askSig) => {
+      // Move to the next bit after numSamplesPerBit
+      if ((i + 1) % numSamplesPerBit === 0) bitIndex++;
+      if (bitIndex >= bitStream.length) break;
+    }
+
+    return askSignal;
+  }, []);
+
+  const updateExplanations = useCallback(() => {
+    const bitStreamExplanation = document.getElementById('bitStreamExplanation');
+    bitStreamExplanation.innerHTML = `<strong>Bit Stream:</strong> ${bitStream}`;
+
+    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
+    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t)`;
+
+    const askSignalExplanation = document.getElementById('askSignalExplanation');
+    askSignalExplanation.innerHTML = `<strong>ASK Modulated Signal:</strong> 
+      <pre>
+        ASK(t) = { 
+          ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t) ; if bit = 1,
+          0                    ; if bit = 0 
+        }
+      </pre>`;
+  }, [bitStream, carrierAmplitude, carrierFrequency, carrierType]);
+
+  const renderCharts = useCallback((carrierSig, askSig) => {
     const timeLabels = Array.from({ length: duration * sampleRate }, (_, i) => i / sampleRate);
 
     // Destroy existing charts before creating new ones
@@ -79,55 +105,41 @@ const ASK = () => {
       },
       options: { scales: { x: { type: 'linear', position: 'bottom' } } },
     });
-  };
+  }, [duration, sampleRate]);
 
-  const generateCarrierSignal = (frequency, amplitude, sampleRate, duration) => {
-    const numSamples = duration * sampleRate;
-    const carrierSignal = [];
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const sample = carrierType === 'cos'
-        ? amplitude * Math.cos(2 * Math.PI * frequency * time)
-        : amplitude * Math.sin(2 * Math.PI * frequency * time);
-      carrierSignal.push(sample);
-    }
-    return carrierSignal;
-  };
+  const updateCharts = useCallback(() => {
+    if (!validateInputs()) return;
 
-  const generateASKSignal = (carrierSignal, bitStream, bitDuration, sampleRate) => {
-    const askSignal = [];
-    const numSamplesPerBit = Math.floor(bitDuration * sampleRate);
-    let bitIndex = 0;
+    // Generate signals
+    const carrierSig = generateCarrierSignal(carrierFrequency, carrierAmplitude, sampleRate, duration);
+    const askSig = generateASKSignal(carrierSig, bitStream, bitDuration, sampleRate);
 
-    for (let i = 0; i < carrierSignal.length; i++) {
-      const bit = bitStream[bitIndex];
-      const modulatedSample = bit === '1' ? carrierSignal[i] : 0;
-      askSignal.push(modulatedSample);
+    // Update the charts
+    renderCharts(carrierSig, askSig);
+    updateExplanations();
+  }, [
+    validateInputs,
+    generateCarrierSignal,
+    generateASKSignal,
+    carrierFrequency,
+    carrierAmplitude,
+    sampleRate,
+    duration,
+    bitStream,
+    bitDuration,
+    renderCharts,
+    updateExplanations
+  ]);
 
-      // Move to the next bit after numSamplesPerBit
-      if ((i + 1) % numSamplesPerBit === 0) bitIndex++;
-      if (bitIndex >= bitStream.length) break;
-    }
+  useEffect(() => {
+    updateCharts();
 
-    return askSignal;
-  };
-
-  const updateExplanations = () => {
-    const bitStreamExplanation = document.getElementById('bitStreamExplanation');
-    bitStreamExplanation.innerHTML = `<strong>Bit Stream:</strong> ${bitStream}`;
-
-    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
-    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t)`;
-
-    const askSignalExplanation = document.getElementById('askSignalExplanation');
-    askSignalExplanation.innerHTML = `<strong>ASK Modulated Signal:</strong> 
-      <pre>
-        ASK(t) = { 
-          ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t) ; if bit = 1,
-          0                    ; if bit = 0 
-        }
-      </pre>`;
-  };
+    // Cleanup charts on component unmount or update
+    return () => {
+      if (carrierChartRef.current) carrierChartRef.current.destroy();
+      if (askChartRef.current) askChartRef.current.destroy();
+    };
+  }, [updateCharts]);
 
   return (
     <div className="ask-container">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import '../../../styles/FSK.css';
 
@@ -20,18 +20,7 @@ const FSK = () => {
   const carrier1ChartRef = useRef(null);
   const fskChartRef = useRef(null);
 
-  useEffect(() => {
-    updateCharts();
-
-    // Cleanup charts on component unmount or update
-    return () => {
-      if (carrier0ChartRef.current) carrier0ChartRef.current.destroy();
-      if (carrier1ChartRef.current) carrier1ChartRef.current.destroy();
-      if (fskChartRef.current) fskChartRef.current.destroy();
-    };
-  }, [bitStream, carrierAmplitude, frequency0, frequency1, carrierType]);
-
-  const validateInputs = () => {
+  const validateInputs = useCallback(() => {
     if (
       carrierAmplitude <= 0 || // Carrier amplitude should be greater than 0
       frequency0 <= 0 ||
@@ -42,22 +31,60 @@ const FSK = () => {
       return false;
     }
     return true;
-  };
+  }, [carrierAmplitude, frequency0, frequency1, bitStream]);
 
-  const updateCharts = () => {
-    if (!validateInputs()) return;
+  const generateCarrierSignal = useCallback((frequency, amplitude, sampleRate, duration) => {
+    const numSamples = duration * sampleRate;
+    const carrierSignal = [];
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const sample = carrierType === 'cos' 
+        ? amplitude * Math.cos(2 * Math.PI * frequency * time)
+        : amplitude * Math.sin(2 * Math.PI * frequency * time);
+      carrierSignal.push(sample);
+    }
+    return carrierSignal;
+  }, [carrierType]);
 
-    // Generate signals
-    const carrier0Sig = generateCarrierSignal(frequency0, carrierAmplitude, sampleRate, duration);
-    const carrier1Sig = generateCarrierSignal(frequency1, carrierAmplitude, sampleRate, duration);
-    const fskSig = generateFSKSignal(carrier0Sig, carrier1Sig, bitStream, bitDuration, sampleRate);
+  const generateFSKSignal = useCallback((carrier0Signal, carrier1Signal, bitStream, bitDuration, sampleRate) => {
+    const fskSignal = [];
+    const numSamplesPerBit = Math.floor(bitDuration * sampleRate);
+    let bitIndex = 0;
 
-    // Update the charts
-    renderCharts(carrier0Sig, carrier1Sig, fskSig);
-    updateExplanations();
-  };
+    for (let i = 0; i < carrier0Signal.length; i++) {
+      const bit = bitStream[bitIndex];
+      const modulatedSample = bit === '0' ? carrier0Signal[i] : carrier1Signal[i];
+      fskSignal.push(modulatedSample);
 
-  const renderCharts = (carrier0Sig, carrier1Sig, fskSig) => {
+      // Move to the next bit after numSamplesPerBit
+      if ((i + 1) % numSamplesPerBit === 0) bitIndex++;
+      if (bitIndex >= bitStream.length) break;
+    }
+
+    return fskSignal;
+  }, []);
+
+  const updateExplanations = useCallback(() => {
+    const bitStreamExplanation = document.getElementById('bitStreamExplanation');
+    bitStreamExplanation.innerHTML = `<strong>Bit Stream:</strong> ${bitStream}`;
+
+    const carrier0SignalExplanation = document.getElementById('carrier0SignalExplanation');
+    carrier0SignalExplanation.innerHTML = `<strong>Carrier Signal (Bit 0):</strong> c0(t) = ${carrierAmplitude} * ${carrierType}(2π * ${frequency0} * t)`;
+
+    const carrier1SignalExplanation = document.getElementById('carrier1SignalExplanation');
+    carrier1SignalExplanation.innerHTML = `<strong>Carrier Signal (Bit 1):</strong> c1(t) = ${carrierAmplitude} * ${carrierType}(2π * ${frequency1} * t)`;
+
+    const fskSignalExplanation = document.getElementById('fskSignalExplanation');
+    fskSignalExplanation.innerHTML = `<strong>FSK Modulated Signal:</strong> 
+      <pre>
+        FSK(t) = { 
+          ${carrierAmplitude} * ${carrierType}(2π * ${frequency0} * t) ; if bit = 0,
+          ${carrierAmplitude} * ${carrierType}(2π * ${frequency1} * t) ; if bit = 1 
+        }
+      </pre>`;
+  }, [bitStream, carrierAmplitude, carrierType, frequency0, frequency1]);
+
+  const renderCharts = useCallback((carrier0Sig, carrier1Sig, fskSig) => {
     const timeLabels = Array.from({ length: duration * sampleRate }, (_, i) => i / sampleRate);
 
     // Destroy existing charts before creating new ones
@@ -95,58 +122,44 @@ const FSK = () => {
       },
       options: { scales: { x: { type: 'linear', position: 'bottom' } } },
     });
-  };
+  }, [duration, sampleRate]);
 
-  const generateCarrierSignal = (frequency, amplitude, sampleRate, duration) => {
-    const numSamples = duration * sampleRate;
-    const carrierSignal = [];
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const sample = carrierType === 'cos' 
-        ? amplitude * Math.cos(2 * Math.PI * frequency * time)
-        : amplitude * Math.sin(2 * Math.PI * frequency * time);
-      carrierSignal.push(sample);
-    }
-    return carrierSignal;
-  };
+  const updateCharts = useCallback(() => {
+    if (!validateInputs()) return;
 
-  const generateFSKSignal = (carrier0Signal, carrier1Signal, bitStream, bitDuration, sampleRate) => {
-    const fskSignal = [];
-    const numSamplesPerBit = Math.floor(bitDuration * sampleRate);
-    let bitIndex = 0;
+    // Generate signals
+    const carrier0Sig = generateCarrierSignal(frequency0, carrierAmplitude, sampleRate, duration);
+    const carrier1Sig = generateCarrierSignal(frequency1, carrierAmplitude, sampleRate, duration);
+    const fskSig = generateFSKSignal(carrier0Sig, carrier1Sig, bitStream, bitDuration, sampleRate);
 
-    for (let i = 0; i < carrier0Signal.length; i++) {
-      const bit = bitStream[bitIndex];
-      const modulatedSample = bit === '0' ? carrier0Signal[i] : carrier1Signal[i];
-      fskSignal.push(modulatedSample);
+    // Update the charts
+    renderCharts(carrier0Sig, carrier1Sig, fskSig);
+    updateExplanations();
+  }, [
+    validateInputs,
+    generateCarrierSignal,
+    generateFSKSignal,
+    frequency0,
+    frequency1,
+    carrierAmplitude,
+    sampleRate,
+    duration,
+    bitStream,
+    bitDuration,
+    renderCharts,
+    updateExplanations
+  ]);
 
-      // Move to the next bit after numSamplesPerBit
-      if ((i + 1) % numSamplesPerBit === 0) bitIndex++;
-      if (bitIndex >= bitStream.length) break;
-    }
+  useEffect(() => {
+    updateCharts();
 
-    return fskSignal;
-  };
-
-  const updateExplanations = () => {
-    const bitStreamExplanation = document.getElementById('bitStreamExplanation');
-    bitStreamExplanation.innerHTML = `<strong>Bit Stream:</strong> ${bitStream}`;
-
-    const carrier0SignalExplanation = document.getElementById('carrier0SignalExplanation');
-    carrier0SignalExplanation.innerHTML = `<strong>Carrier Signal (Bit 0):</strong> c0(t) = ${carrierAmplitude} * ${carrierType}(2π * ${frequency0} * t)`;
-
-    const carrier1SignalExplanation = document.getElementById('carrier1SignalExplanation');
-    carrier1SignalExplanation.innerHTML = `<strong>Carrier Signal (Bit 1):</strong> c1(t) = ${carrierAmplitude} * ${carrierType}(2π * ${frequency1} * t)`;
-
-    const fskSignalExplanation = document.getElementById('fskSignalExplanation');
-    fskSignalExplanation.innerHTML = `<strong>FSK Modulated Signal:</strong> 
-      <pre>
-        FSK(t) = { 
-          ${carrierAmplitude} * ${carrierType}(2π * ${frequency0} * t) ; if bit = 0,
-          ${carrierAmplitude} * ${carrierType}(2π * ${frequency1} * t) ; if bit = 1 
-        }
-      </pre>`;
-  };
+    // Cleanup charts on component unmount or update
+    return () => {
+      if (carrier0ChartRef.current) carrier0ChartRef.current.destroy();
+      if (carrier1ChartRef.current) carrier1ChartRef.current.destroy();
+      if (fskChartRef.current) fskChartRef.current.destroy();
+    };
+  }, [updateCharts]);
 
   return (
     <div className="fsk-container">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import '../../../styles/BPSK.css';
 
@@ -10,25 +10,49 @@ export default function Component() {
   const sampleRate = 1000; // Samples per second
   const duration = 1; // Total duration in seconds for the bit stream
 
-  // Calculate bit rate and duration per bit based on the length of bit stream
-  const bitRate = bitStream.length / duration;
-  const bitDuration = 1 / bitRate;
-
   // Refs to store chart instances for cleanup
   const carrierChartRef = useRef(null);
   const bpskChartRef = useRef(null);
 
-  useEffect(() => {
-    updateCharts();
+  const generateCarrierSignal = useCallback((frequency, amplitude, sampleRate, duration) => {
+    const numSamples = duration * sampleRate;
+    const carrierSignal = [];
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const sample = amplitude * (carrierType === 'cos' ? 
+        Math.cos(2 * Math.PI * frequency * time) : 
+        Math.sin(2 * Math.PI * frequency * time));
+      carrierSignal.push(sample);
+    }
+    return carrierSignal;
+  }, [carrierType]);
 
-    // Cleanup charts on component unmount or update
-    return () => {
-      if (carrierChartRef.current) carrierChartRef.current.destroy();
-      if (bpskChartRef.current) bpskChartRef.current.destroy();
-    };
-  }, [bitStream, carrierAmplitude, carrierFrequency, carrierType]);
+  const generateBPSKSignal = useCallback(() => {
+    const bpskSignal = [];
+    const totalSamples = sampleRate * duration;
+    const samplesPerBit = Math.floor(totalSamples / bitStream.length);
+    
+    const w = 2 * Math.PI * carrierFrequency;
+    
+    for (let i = 0; i < totalSamples; i++) {
+      const t = i / sampleRate;
+      const bitIndex = Math.floor(i / samplesPerBit);
+      
+      if (bitIndex >= bitStream.length) break;
+      
+      const bitValue = bitStream[bitIndex] === '1' ? 1 : -1;
+      
+      const sample = carrierAmplitude * bitValue * (
+        carrierType === 'cos' ? Math.cos(w * t) : Math.sin(w * t)
+      );
+      
+      bpskSignal.push(sample);
+    }
+    
+    return bpskSignal;
+  }, [bitStream, carrierAmplitude, carrierFrequency, carrierType, duration, sampleRate]);
 
-  const validateInputs = () => {
+  const validateInputs = useCallback(() => {
     if (
       carrierAmplitude <= 0 ||
       carrierFrequency <= 0 ||
@@ -38,21 +62,26 @@ export default function Component() {
       return false;
     }
     return true;
-  };
+  }, [carrierAmplitude, carrierFrequency, bitStream]);
 
-  const updateCharts = () => {
-    if (!validateInputs()) return;
+  const updateExplanations = useCallback(() => {
+    const bitStreamExplanation = document.getElementById('bitStreamExplanation');
+    bitStreamExplanation.innerHTML = `<strong>Bit Stream:</strong> ${bitStream}`;
 
-    // Generate signals
-    const carrierSig = generateCarrierSignal(carrierFrequency, carrierAmplitude, sampleRate, duration);
-    const bpskSig = generateBPSKSignal(carrierSig, bitStream, bitDuration, sampleRate);
+    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
+    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t)`;
 
-    // Update the charts
-    renderCharts(carrierSig, bpskSig);
-    updateExplanations();
-  };
+    const bpskSignalExplanation = document.getElementById('bpskSignalExplanation');
+    bpskSignalExplanation.innerHTML = `<strong>BPSK Modulated Signal:</strong> 
+      <pre>
+        BPSK(t) = { 
+          ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t) ; if bit = 1,
+          ${-carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t) ; if bit = 0 
+        }
+      </pre>`;
+  }, [bitStream, carrierAmplitude, carrierFrequency, carrierType]);
 
-  const renderCharts = (carrierSig, bpskSig) => {
+  const renderCharts = useCallback((carrierSig, bpskSig) => {
     const timeLabels = Array.from({ length: duration * sampleRate }, (_, i) => i / sampleRate);
 
     if (carrierChartRef.current) carrierChartRef.current.destroy();
@@ -78,72 +107,39 @@ export default function Component() {
       },
       options: { scales: { x: { type: 'linear', position: 'bottom' } } },
     });
-  };
+  }, [duration, sampleRate]);
 
-  const generateCarrierSignal = (frequency, amplitude, sampleRate, duration) => {
-    const numSamples = duration * sampleRate;
-    const carrierSignal = [];
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const sample = amplitude * (carrierType === 'cos' ? 
-        Math.cos(2 * Math.PI * frequency * time) : 
-        Math.sin(2 * Math.PI * frequency * time));
-      carrierSignal.push(sample);
-    }
-    return carrierSignal;
-  };
+  const updateCharts = useCallback(() => {
+    if (!validateInputs()) return;
 
-  const generateBPSKSignal = () => {
-    const bpskSignal = [];
-    const totalSamples = sampleRate * duration;
-    const samplesPerBit = Math.floor(totalSamples / bitStream.length);
-    
-    // Calculate carrier angular frequency
-    const w = 2 * Math.PI * carrierFrequency;
-    
-    for (let i = 0; i < totalSamples; i++) {
-      const t = i / sampleRate;
-      const bitIndex = Math.floor(i / samplesPerBit);
-      
-      // Ensure we don't exceed the bit stream length
-      if (bitIndex >= bitStream.length) break;
-      
-      // Get the current bit value (1 -> +1, 0 -> -1 for phase shift)
-      const bitValue = bitStream[bitIndex] === '1' ? 1 : -1;
-      
-      // Generate BPSK signal
-      // For cosine carrier: s(t) = A * bitValue * cos(wt)
-      // For sine carrier: s(t) = A * bitValue * sin(wt)
-      const sample = carrierAmplitude * bitValue * (
-        carrierType === 'cos' ? Math.cos(w * t) : Math.sin(w * t)
-      );
-      
-      bpskSignal.push(sample);
-    }
-    
-    return bpskSignal;
-  };
+    // Generate signals
+    const carrierSig = generateCarrierSignal(carrierFrequency, carrierAmplitude, sampleRate, duration);
+    const bpskSig = generateBPSKSignal();
 
+    // Update the charts
+    renderCharts(carrierSig, bpskSig);
+    updateExplanations();
+  }, [
+    validateInputs,
+    generateCarrierSignal,
+    generateBPSKSignal,
+    renderCharts,
+    updateExplanations,
+    carrierFrequency,
+    carrierAmplitude,
+    sampleRate,
+    duration
+  ]);
 
-    
+  useEffect(() => {
+    updateCharts();
 
-
-  const updateExplanations = () => {
-    const bitStreamExplanation = document.getElementById('bitStreamExplanation');
-    bitStreamExplanation.innerHTML = `<strong>Bit Stream:</strong> ${bitStream}`;
-
-    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
-    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t)`;
-
-    const bpskSignalExplanation = document.getElementById('bpskSignalExplanation');
-    bpskSignalExplanation.innerHTML = `<strong>BPSK Modulated Signal:</strong> 
-      <pre>
-        BPSK(t) = { 
-          ${carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t) ; if bit = 1,
-          ${-carrierAmplitude} * ${carrierType}(2π * ${carrierFrequency} * t) ; if bit = 0 
-        }
-      </pre>`;
-  };
+    // Cleanup charts on component unmount or update
+    return () => {
+      if (carrierChartRef.current) carrierChartRef.current.destroy();
+      if (bpskChartRef.current) bpskChartRef.current.destroy();
+    };
+  }, [updateCharts]);
 
   return (
     <div className="bpsk-container">
