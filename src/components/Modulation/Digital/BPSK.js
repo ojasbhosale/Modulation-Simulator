@@ -93,22 +93,40 @@ export default function Component() {
     return carrierSignal;
   };
 
-  const generateBPSKSignal = (carrierSignal, bitStream, bitDuration, sampleRate) => {
+  const generateBPSKSignal = () => {
     const bpskSignal = [];
-    const numSamplesPerBit = Math.floor(bitDuration * sampleRate);
-    let bitIndex = 0;
-
-    for (let i = 0; i < carrierSignal.length; i++) {
-      const bit = bitStream[bitIndex];
-      const modulatedSample = bit === '1' ? carrierSignal[i] : -carrierSignal[i];
-      bpskSignal.push(modulatedSample);
-
-      if ((i + 1) % numSamplesPerBit === 0) bitIndex++;
+    const totalSamples = sampleRate * duration;
+    const samplesPerBit = Math.floor(totalSamples / bitStream.length);
+    
+    // Calculate carrier angular frequency
+    const w = 2 * Math.PI * carrierFrequency;
+    
+    for (let i = 0; i < totalSamples; i++) {
+      const t = i / sampleRate;
+      const bitIndex = Math.floor(i / samplesPerBit);
+      
+      // Ensure we don't exceed the bit stream length
       if (bitIndex >= bitStream.length) break;
+      
+      // Get the current bit value (1 -> +1, 0 -> -1 for phase shift)
+      const bitValue = bitStream[bitIndex] === '1' ? 1 : -1;
+      
+      // Generate BPSK signal
+      // For cosine carrier: s(t) = A * bitValue * cos(wt)
+      // For sine carrier: s(t) = A * bitValue * sin(wt)
+      const sample = carrierAmplitude * bitValue * (
+        carrierType === 'cos' ? Math.cos(w * t) : Math.sin(w * t)
+      );
+      
+      bpskSignal.push(sample);
     }
-
+    
     return bpskSignal;
   };
+
+
+    
+
 
   const updateExplanations = () => {
     const bitStreamExplanation = document.getElementById('bitStreamExplanation');

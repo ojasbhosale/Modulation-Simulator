@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import '../../../styles/FM.css';
 
@@ -13,52 +13,69 @@ export default function FMComponent() {
   const sampleRate = 1000; // Samples per second
   const duration = 1; // Duration in seconds
 
-  // Refs to store chart instances for cleanup
   const messageChartRef = useRef(null);
   const carrierChartRef = useRef(null);
   const fmChartRef = useRef(null);
 
-  useEffect(() => {
-    updateCharts();
-
-    // Cleanup charts on component unmount or update
-    return () => {
-      if (messageChartRef.current) messageChartRef.current.destroy();
-      if (carrierChartRef.current) carrierChartRef.current.destroy();
-      if (fmChartRef.current) fmChartRef.current.destroy();
-    };
-  }, [messageAmplitude, carrierAmplitude, messageFrequency, carrierFrequency, modulationIndex, messageWaveform, carrierWaveform]);
-
-  const validateInputs = () => {
+  // Validation function, memoized with useCallback
+  const validateInputs = useCallback(() => {
     if (
       messageAmplitude <= 0 ||
       carrierAmplitude <= 0 ||
       carrierFrequency <= 0 ||
-      messageFrequency <= 0 
+      messageFrequency <= 0
     ) {
       alert('Please enter valid positive values for all parameters.');
       return false;
     }
     return true;
-  };
+  }, [messageAmplitude, carrierAmplitude, carrierFrequency, messageFrequency]);
 
-  const updateCharts = () => {
-    if (!validateInputs()) return;
+  // Signal generation functions
+  const generateSignal = useCallback((frequency, amplitude, duration, sampleRate, waveform) => {
+    const numSamples = duration * sampleRate;
+    const signal = [];
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const sample = amplitude * (waveform === 'sin' ? Math.sin(2 * Math.PI * frequency * time) : Math.cos(2 * Math.PI * frequency * time));
+      signal.push(sample);
+    }
+    return signal;
+  }, []);
 
-    // Generate signals
-    const carrierSig = generateSignal(carrierFrequency, carrierAmplitude, duration, sampleRate, carrierWaveform);
-    const messageSig = generateSignal(messageFrequency, messageAmplitude, duration, sampleRate, messageWaveform);
-    const fmSig = generateFMSignal(carrierSig, messageSig, modulationIndex, duration, sampleRate);
+  const generateFMSignal = useCallback((carrierSignal, messageSignal, modulationIndex, duration, sampleRate) => {
+    const fmSignal = [];
+    const numSamples = carrierSignal.length;
+    let integral = 0;
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      integral += messageSignal[i] / sampleRate;
+      const phase = 2 * Math.PI * (carrierFrequency * time + (modulationIndex * messageFrequency / messageAmplitude) * integral);
+      const sample = carrierAmplitude * (carrierWaveform === 'sin' ? Math.sin(phase) : Math.cos(phase));
+      fmSignal.push(sample);
+    }
+    return fmSignal;
+  }, [carrierFrequency, carrierAmplitude, carrierWaveform, messageFrequency, messageAmplitude]);
 
-    // Update the charts
-    renderCharts(carrierSig, messageSig, fmSig);
-    updateExplanations();
-  };
+  // Update explanations for signals
+  const updateExplanations = useCallback(() => {
+    const messageSignalExplanation = document.getElementById('messageSignalExplanation');
+    messageSignalExplanation.innerHTML = `<strong>Message Signal:</strong> m(t) = ${messageAmplitude} * ${messageWaveform}(2π * ${messageFrequency} * t)`;
 
-  const renderCharts = (carrierSig, messageSig, fmSig) => {
+    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
+    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierWaveform}(2π * ${carrierFrequency} * t)`;
+
+    const modulationIndexExplanation = document.getElementById('modulationIndexExplanation');
+    modulationIndexExplanation.innerHTML = `<strong>Modulation Index (β):</strong> β = ${modulationIndex.toFixed(2)}`;
+
+    const fmSignalExplanation = document.getElementById('fmSignalExplanation');
+    fmSignalExplanation.innerHTML = `<strong>FM Modulated Signal:</strong> FM(t) = ${carrierAmplitude} * ${carrierWaveform}(2π * ${carrierFrequency} * t + (${modulationIndex.toFixed(2)} * ${messageFrequency} / ${messageAmplitude}) * ∫m(T)dT)`;
+  }, [messageAmplitude, messageWaveform, messageFrequency, carrierAmplitude, carrierWaveform, carrierFrequency, modulationIndex]);
+
+  // Render charts
+  const renderCharts = useCallback((carrierSig, messageSig, fmSig) => {
     const timeLabels = Array.from({ length: duration * sampleRate }, (_, i) => i / sampleRate);
 
-    // Destroy existing charts before creating new ones
     if (messageChartRef.current) messageChartRef.current.destroy();
     if (carrierChartRef.current) carrierChartRef.current.destroy();
     if (fmChartRef.current) fmChartRef.current.destroy();
@@ -93,47 +110,30 @@ export default function FMComponent() {
       },
       options: { scales: { x: { type: 'linear', position: 'bottom' } } },
     });
-  };
+  }, [duration, sampleRate]);
 
-  const generateSignal = (frequency, amplitude, duration, sampleRate, waveform) => {
-    const numSamples = duration * sampleRate;
-    const signal = [];
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const sample = amplitude * (waveform === 'sin' ? Math.sin(2 * Math.PI * frequency * time) : Math.cos(2 * Math.PI * frequency * time));
-      signal.push(sample);
-    }
-    return signal;
-  };
+  // Function to update the charts, memoized with useCallback
+  const updateCharts = useCallback(() => {
+    if (!validateInputs()) return;
 
-  const generateFMSignal = (carrierSignal, messageSignal, modulationIndex, duration, sampleRate) => {
-    const fmSignal = [];
-    const numSamples = carrierSignal.length;
-    let integral = 0;
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      integral += messageSignal[i] / sampleRate;
-      const phase = 2 * Math.PI * (carrierFrequency * time + (modulationIndex * messageFrequency / messageAmplitude) * integral);
-      const sample = carrierAmplitude * (carrierWaveform === 'sin' ? Math.sin(phase) : Math.cos(phase));
-      fmSignal.push(sample);
-    }
-    return fmSignal;
-  };
+    const carrierSig = generateSignal(carrierFrequency, carrierAmplitude, duration, sampleRate, carrierWaveform);
+    const messageSig = generateSignal(messageFrequency, messageAmplitude, duration, sampleRate, messageWaveform);
+    const fmSig = generateFMSignal(carrierSig, messageSig, modulationIndex, duration, sampleRate);
 
-  const updateExplanations = () => {
-    const messageSignalExplanation = document.getElementById('messageSignalExplanation');
-    messageSignalExplanation.innerHTML = `<strong>Message Signal:</strong> m(t) = ${messageAmplitude} * ${messageWaveform}(2π * ${messageFrequency} * t)`;
+    renderCharts(carrierSig, messageSig, fmSig);
+    updateExplanations();
+  }, [validateInputs, generateSignal, generateFMSignal, renderCharts, updateExplanations, carrierFrequency, carrierAmplitude, messageFrequency, messageAmplitude, modulationIndex, carrierWaveform, messageWaveform]);
 
-    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
-    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierWaveform}(2π * ${carrierFrequency} * t)`;
+  useEffect(() => {
+    updateCharts();
 
-    const modulationIndexExplanation = document.getElementById('modulationIndexExplanation');
-    modulationIndexExplanation.innerHTML = `<strong>Modulation Index (β):</strong> β = ${modulationIndex.toFixed(2)}`;
-
-    const fmSignalExplanation = document.getElementById('fmSignalExplanation');
-    fmSignalExplanation.innerHTML = `<strong>FM Modulated Signal:</strong> FM(t) = ${carrierAmplitude} * ${carrierWaveform}(2π * ${carrierFrequency} * t + (${modulationIndex.toFixed(2)} * ${messageFrequency} / ${messageAmplitude}) * ∫m(T)dT)`;
-  };
-
+    return () => {
+      if (messageChartRef.current) messageChartRef.current.destroy();
+      if (carrierChartRef.current) carrierChartRef.current.destroy();
+      if (fmChartRef.current) fmChartRef.current.destroy();
+    };
+  }, [updateCharts]);
+  
   return (
     <div className="fm-container">
       <h2>FM Modulation</h2>

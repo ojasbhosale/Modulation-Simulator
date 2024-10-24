@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import '../../../styles/PM.css';
 
@@ -18,18 +18,7 @@ export default function Component() {
   const carrierChartRef = useRef(null);
   const pmChartRef = useRef(null);
 
-  useEffect(() => {
-    updateCharts();
-
-    // Cleanup charts on component unmount or update
-    return () => {
-      if (messageChartRef.current) messageChartRef.current.destroy();
-      if (carrierChartRef.current) carrierChartRef.current.destroy();
-      if (pmChartRef.current) pmChartRef.current.destroy();
-    };
-  }, [messageAmplitude, carrierAmplitude, messageFrequency, carrierFrequency, modulationIndex, messageFunction, carrierFunction]);
-
-  const validateInputs = () => {
+  const validateInputs = useCallback(() => {
     if (
       messageAmplitude <= 0 ||
       carrierAmplitude <= 0 ||
@@ -40,9 +29,59 @@ export default function Component() {
       return false;
     }
     return true;
-  };
+  }, [messageAmplitude, carrierAmplitude, carrierFrequency, messageFrequency]);
 
-  const updateCharts = () => {
+  const generateCarrierSignal = useCallback((frequency, amplitude, duration, sampleRate) => {
+    const numSamples = duration * sampleRate;
+    const carrierSignal = [];
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const sample = amplitude * (carrierFunction === 'cos' ? Math.cos(2 * Math.PI * frequency * time) : Math.sin(2 * Math.PI * frequency * time));
+      carrierSignal.push(sample);
+    }
+    return carrierSignal;
+  }, [carrierFunction]);
+
+  const generateMessageSignal = useCallback((amplitude, frequency, duration, sampleRate) => {
+    const numSamples = duration * sampleRate;
+    const messageSignal = [];
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const sample = amplitude * (messageFunction === 'sin' ? Math.sin(2 * Math.PI * frequency * time) : Math.cos(2 * Math.PI * frequency * time));
+      messageSignal.push(sample);
+    }
+    return messageSignal;
+  }, [messageFunction]);
+
+  const generatePMSignal = useCallback((carrierSignal, messageSignal, modulationIndex, duration, sampleRate) => {
+    const pmSignal = [];
+    const numSamples = carrierSignal.length;
+    for (let i = 0; i < numSamples; i++) {
+      const time = i / sampleRate;
+      const modulatedPhase = (modulationIndex/messageAmplitude) * messageSignal[i];
+      const sample = carrierAmplitude * (carrierFunction === 'cos' ? 
+        Math.cos((2 * Math.PI * ( carrierFrequency * time + modulatedPhase))) :
+        Math.sin((2 * Math.PI * ( carrierFrequency * time + modulatedPhase))));
+      pmSignal.push(sample);
+    }
+    return pmSignal;
+  }, [carrierAmplitude, carrierFunction, carrierFrequency, messageAmplitude]);
+
+  const updateExplanations = useCallback(() => {
+    const messageSignalExplanation = document.getElementById('messageSignalExplanation');
+    messageSignalExplanation.innerHTML = `<strong>Message Signal:</strong> m(t) = ${messageAmplitude} * ${messageFunction}(2π * ${messageFrequency} * t)`;
+
+    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
+    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierFunction}(2π * ${carrierFrequency} * t)`;
+
+    const modulationIndexExplanation = document.getElementById('modulationIndexExplanation');
+    modulationIndexExplanation.innerHTML = `<strong>Modulation Index (β):</strong> β = ${modulationIndex.toFixed(2)}`;
+
+    const pmSignalExplanation = document.getElementById('pmSignalExplanation');
+    pmSignalExplanation.innerHTML = `<strong>PM Modulated Signal:</strong> PM(t) = ${carrierAmplitude} * ${carrierFunction}(2π * ${carrierFrequency} * t + (${modulationIndex.toFixed(2)} / ${messageAmplitude}) * m(t))`;
+  }, [messageAmplitude, messageFunction, messageFrequency, carrierAmplitude, carrierFunction, carrierFrequency, modulationIndex]);
+
+  const updateCharts = useCallback(() => {
     if (!validateInputs()) return;
 
     // Generate signals
@@ -53,8 +92,20 @@ export default function Component() {
     // Update the charts
     renderCharts(carrierSig, messageSig, pmSig);
     updateExplanations();
-  };
+  }, [validateInputs, generateCarrierSignal, generateMessageSignal, generatePMSignal, updateExplanations, carrierFrequency, carrierAmplitude, messageAmplitude, messageFrequency, modulationIndex, duration, sampleRate]);
 
+  useEffect(() => {
+    updateCharts();
+
+    // Cleanup charts on component unmount or update
+    return () => {
+      if (messageChartRef.current) messageChartRef.current.destroy();
+      if (carrierChartRef.current) carrierChartRef.current.destroy();
+      if (pmChartRef.current) pmChartRef.current.destroy();
+    };
+  }, [updateCharts]);
+
+  // The renderCharts function remains unchanged
   const renderCharts = (carrierSig, messageSig, pmSig) => {
     const timeLabels = Array.from({ length: duration * sampleRate }, (_, i) => i / sampleRate);
 
@@ -93,56 +144,6 @@ export default function Component() {
       },
       options: { scales: { x: { type: 'linear', position: 'bottom' } } },
     });
-  };
-
-  const generateCarrierSignal = (frequency, amplitude, duration, sampleRate) => {
-    const numSamples = duration * sampleRate;
-    const carrierSignal = [];
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const sample = amplitude * (carrierFunction === 'cos' ? Math.cos(2 * Math.PI * frequency * time) : Math.sin(2 * Math.PI * frequency * time));
-      carrierSignal.push(sample);
-    }
-    return carrierSignal;
-  };
-
-  const generateMessageSignal = (amplitude, frequency, duration, sampleRate) => {
-    const numSamples = duration * sampleRate;
-    const messageSignal = [];
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const sample = amplitude * (messageFunction === 'sin' ? Math.sin(2 * Math.PI * frequency * time) : Math.cos(2 * Math.PI * frequency * time));
-      messageSignal.push(sample);
-    }
-    return messageSignal;
-  };
-
-  const generatePMSignal = (carrierSignal, messageSignal, modulationIndex, duration, sampleRate) => {
-    const pmSignal = [];
-    const numSamples = carrierSignal.length;
-    for (let i = 0; i < numSamples; i++) {
-      const time = i / sampleRate;
-      const modulatedPhase = (modulationIndex/messageAmplitude) * messageSignal[i];
-      const sample = carrierAmplitude * (carrierFunction === 'cos' ? 
-        Math.cos((2 * Math.PI * ( carrierFrequency * time + modulatedPhase))) :
-        Math.sin((2 * Math.PI * ( carrierFrequency * time + modulatedPhase))));
-      pmSignal.push(sample);
-    }
-    return pmSignal;
-  };
-
-  const updateExplanations = () => {
-    const messageSignalExplanation = document.getElementById('messageSignalExplanation');
-    messageSignalExplanation.innerHTML = `<strong>Message Signal:</strong> m(t) = ${messageAmplitude} * ${messageFunction}(2π * ${messageFrequency} * t)`;
-
-    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
-    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierFunction}(2π * ${carrierFrequency} * t)`;
-
-    const modulationIndexExplanation = document.getElementById('modulationIndexExplanation');
-    modulationIndexExplanation.innerHTML = `<strong>Modulation Index (β):</strong> β = ${modulationIndex.toFixed(2)}`;
-
-    const pmSignalExplanation = document.getElementById('pmSignalExplanation');
-    pmSignalExplanation.innerHTML = `<strong>PM Modulated Signal:</strong> PM(t) = ${carrierAmplitude} * ${carrierFunction}(2π * ${carrierFrequency} * t + (${modulationIndex.toFixed(2)} / ${messageAmplitude}) * m(t))`;
   };
 
   return (

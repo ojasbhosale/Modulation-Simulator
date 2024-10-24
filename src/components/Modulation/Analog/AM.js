@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
 import '../../../styles/AM.css';
 
 const AM = () => {
@@ -19,18 +17,7 @@ const AM = () => {
   const carrierChartRef = useRef(null);
   const amChartRef = useRef(null);
 
-  useEffect(() => {
-    updateCharts();
-
-    // Cleanup charts on component unmount or update
-    return () => {
-      if (messageChartRef.current) messageChartRef.current.destroy();
-      if (carrierChartRef.current) carrierChartRef.current.destroy();
-      if (amChartRef.current) amChartRef.current.destroy();
-    };
-  }, [messageAmplitude, carrierAmplitude, messageFrequency, carrierFrequency, messageSignalType, carrierSignalType]);
-
-  const validateInputs = () => {
+  const validateInputs = useCallback(() => {
     if (
       messageAmplitude < 0 ||
       carrierAmplitude <= 0 ||
@@ -41,9 +28,23 @@ const AM = () => {
       return false;
     }
     return true;
-  };
+  }, [messageAmplitude, carrierAmplitude, carrierFrequency, messageFrequency]);
 
-  const updateCharts = () => {
+  const updateExplanations = useCallback((modulationIdx) => {
+    const messageSignalExplanation = document.getElementById('messageSignalExplanation');
+    messageSignalExplanation.innerHTML = `<strong>Message Signal:</strong> m(t) = ${messageAmplitude} * ${messageSignalType}(2π * ${messageFrequency} * t)`;
+
+    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
+    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierSignalType}(2π * ${carrierFrequency} * t)`;
+
+    const modulationIndexExplanation = document.getElementById('modulationIndexExplanation');
+    modulationIndexExplanation.innerHTML = `<strong>Modulation Index (m):</strong> m = ${modulationIdx.toFixed(2)}`;
+
+    const amSignalExplanation = document.getElementById('amSignalExplanation');
+    amSignalExplanation.innerHTML = `<strong>AM Modulated Signal:</strong> AM(t) = ${carrierAmplitude} * [1 + ${modulationIdx.toFixed(2)} * ${messageSignalType}(2π * ${messageFrequency} * t)] * ${carrierSignalType}(2π * ${carrierFrequency} * t)`;
+  }, [messageAmplitude, messageSignalType, messageFrequency, carrierAmplitude, carrierSignalType, carrierFrequency]);
+
+  const updateCharts = useCallback(() => {
     if (!validateInputs()) return;
 
     const modulationIdx = messageAmplitude / carrierAmplitude;
@@ -56,7 +57,27 @@ const AM = () => {
     // Update the charts
     renderCharts(carrierSig, messageSig, amSig);
     updateExplanations(modulationIdx);
-  };
+  }, [
+    messageAmplitude,
+    carrierAmplitude,
+    messageFrequency,
+    carrierFrequency,
+    messageSignalType,
+    carrierSignalType,
+    validateInputs,
+    updateExplanations
+  ]);
+
+  useEffect(() => {
+    updateCharts();
+
+    // Cleanup charts on component unmount or update
+    return () => {
+      if (messageChartRef.current) messageChartRef.current.destroy();
+      if (carrierChartRef.current) carrierChartRef.current.destroy();
+      if (amChartRef.current) amChartRef.current.destroy();
+    };
+  }, [updateCharts]);
 
   const renderCharts = (carrierSig, messageSig, amSig) => {
     const timeLabels = Array.from({ length: duration * sampleRate }, (_, i) => i / sampleRate);
@@ -117,20 +138,6 @@ const AM = () => {
       amSignal.push(modulatedSample);
     }
     return amSignal;
-  };
-
-  const updateExplanations = (modulationIdx) => {
-    const messageSignalExplanation = document.getElementById('messageSignalExplanation');
-    messageSignalExplanation.innerHTML = `<strong>Message Signal:</strong> m(t) = ${messageAmplitude} * ${messageSignalType}(2π * ${messageFrequency} * t)`;
-
-    const carrierSignalExplanation = document.getElementById('carrierSignalExplanation');
-    carrierSignalExplanation.innerHTML = `<strong>Carrier Signal:</strong> c(t) = ${carrierAmplitude} * ${carrierSignalType}(2π * ${carrierFrequency} * t)`;
-
-    const modulationIndexExplanation = document.getElementById('modulationIndexExplanation');
-    modulationIndexExplanation.innerHTML = `<strong>Modulation Index (m):</strong> m = ${modulationIdx.toFixed(2)}`;
-
-    const amSignalExplanation = document.getElementById('amSignalExplanation');
-    amSignalExplanation.innerHTML = `<strong>AM Modulated Signal:</strong> AM(t) = ${carrierAmplitude} * [1 + ${modulationIdx.toFixed(2)} * ${messageSignalType}(2π * ${messageFrequency} * t)] * ${carrierSignalType}(2π * ${carrierFrequency} * t)`;
   };
 
   return (
